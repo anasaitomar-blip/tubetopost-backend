@@ -88,12 +88,17 @@ Et dans `popup.js` / `options.js`, les liens `tubetopost.com/upgrade` et
 
 ---
 
+## Persistance — Stripe est la source de vérité
+
+- **Aucune base de données.** `/api/subscription-status`, `/api/portal` et
+  `/api/cancel` interrogent **Stripe en direct** (client + abonnement par email).
+  Rien n'est stocké côté backend → le disque éphémère du plan Free n'a aucun impact.
+- Le webhook sert au **log/observabilité** (pas de persistance). Il reste branché
+  pour ajouter plus tard e-mails de bienvenue, analytics, etc.
+
 ## ⚠️ Limite du plan Free
 
-- Disque **éphémère** : `store.js` (fichier JSON) est réinitialisé à chaque
-  redéploiement / mise en veille. Les abonnements enregistrés peuvent être perdus.
-- Pour la prod : remplace `store.js` par une vraie base (Render Postgres,
-  Upstash Redis…). Stripe reste la source de vérité — un `GET /api/subscription-status`
-  peut être réécrit pour interroger Stripe directement.
-- Le service Free se met en veille après inactivité : le 1er webhook peut être
-  lent, mais **Stripe réessaie automatiquement**.
+- Le service Free se met en veille après inactivité : le 1er appel (et le 1er
+  webhook) peut être lent (cold start). Stripe **réessaie automatiquement** les webhooks.
+- Chaque vérification de statut fait 1-2 appels API Stripe : pour un gros volume,
+  ajouter un cache court (ex. Vercel Runtime Cache / Redis) devant `resolveByEmail`.

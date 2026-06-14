@@ -67,6 +67,8 @@ Et l'`statusUrl` doit recevoir l'email — l'extension envoie l'email stocké da
 
 ## Production
 
-- Remplacer `store.js` (fichier JSON) par une vraie base de données.
-- Servir en HTTPS derrière un reverse proxy.
+- **Pas de base de données** : Stripe est la source de vérité (statut/portail/résiliation
+  résolus par email en direct). Le disque éphémère de l'hébergeur n'a aucun impact.
+- Servir en HTTPS (Render le fait nativement).
 - L'identification se fait par email ; pour un vrai SaaS, ajouter une authentification.
+- Volume élevé : mettre un cache court devant `resolveByEmail` pour limiter les appels Stripe.

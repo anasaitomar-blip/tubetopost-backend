@@ -13,7 +13,6 @@ import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import Stripe from 'stripe';
-import * as store from './store.js';
 
 const {
   STRIPE_SECRET_KEY,
@@ -40,6 +39,33 @@ const app = express();
 app.use(cors({ origin: true }));
 
 // ---------------------------------------------------------------------------
+// Résolution depuis Stripe (source de vérité — pas de base locale).
+// Un email peut correspondre à plusieurs clients ; on cherche celui qui a
+// un abonnement actif, sinon on renvoie le 1er client trouvé (pour le portail).
+// ---------------------------------------------------------------------------
+const ACTIVE_STATUSES = ['active', 'trialing', 'past_due'];
+
+async function customersByEmail(email) {
+  const res = await stripe.customers.list({ email, limit: 10 });
+  return res.data;
+}
+
+async function activeSubscriptionFor(customerId) {
+  const subs = await stripe.subscriptions.list({ customer: customerId, status: 'all', limit: 20 });
+  return subs.data.find((s) => ACTIVE_STATUSES.includes(s.status)) || null;
+}
+
+// -> { customer, sub } ; customer/sub peuvent être null.
+async function resolveByEmail(email) {
+  const customers = await customersByEmail(email);
+  for (const c of customers) {
+    const sub = await activeSubscriptionFor(c.id);
+    if (sub) return { customer: c, sub };
+  }
+  return { customer: customers[0] || null, sub: null };
+}
+
+// ---------------------------------------------------------------------------
 // WEBHOOK — DOIT recevoir le corps brut (raw) AVANT express.json().
 // ---------------------------------------------------------------------------
 app.post('/api/webhook', express.raw({ type: 'application/json' }), (req, res) => {
@@ -57,51 +83,22 @@ app.post('/api/webhook', express.raw({ type: 'application/json' }), (req, res) =
   res.json({ received: true });
 });
 
+// L'état n'est plus persisté localement : Stripe est la source de vérité,
+// /api/subscription-status l'interroge en direct. Le webhook sert au log/observabilité
+// (et reste utile pour brancher e-mails, analytics, etc. plus tard).
 async function handleEvent(event) {
   switch (event.type) {
-    // Abonnement souscrit avec succès.
     case 'checkout.session.completed': {
-      const session = event.data.object;
-      if (session.mode !== 'subscription') break;
-      const email = (session.customer_details?.email || session.metadata?.email || '').toLowerCase();
-      const customerId = session.customer;
-      const subscriptionId = session.subscription;
-      let currentPeriodEnd = null;
-      if (subscriptionId) {
-        const sub = await stripe.subscriptions.retrieve(subscriptionId);
-        currentPeriodEnd = sub.current_period_end;
-      }
-      if (email) {
-        store.upsert(email, {
-          customerId, subscriptionId,
-          status: 'active', currentPeriodEnd, cancelAtPeriodEnd: false
-        });
-        console.log(`✓ Abonnement actif: ${email}`);
-      }
+      const email = event.data.object?.customer_details?.email || event.data.object?.metadata?.email || '?';
+      console.log(`✓ Abonnement souscrit: ${email}`);
       break;
     }
-
-    // Changement d'état (renouvellement, annulation programmée, paiement échoué…).
-    case 'customer.subscription.updated': {
-      const sub = event.data.object;
-      const active = ['active', 'trialing', 'past_due'].includes(sub.status);
-      store.updateByCustomerId(sub.customer, {
-        status: active ? 'active' : 'inactive',
-        subscriptionId: sub.id,
-        currentPeriodEnd: sub.current_period_end,
-        cancelAtPeriodEnd: sub.cancel_at_period_end
-      });
+    case 'customer.subscription.updated':
+      console.log(`↻ Abonnement mis à jour: client ${event.data.object?.customer} (${event.data.object?.status})`);
       break;
-    }
-
-    // Abonnement réellement terminé.
-    case 'customer.subscription.deleted': {
-      const sub = event.data.object;
-      store.updateByCustomerId(sub.customer, { status: 'inactive', cancelAtPeriodEnd: false });
-      console.log(`✗ Abonnement terminé: client ${sub.customer}`);
+    case 'customer.subscription.deleted':
+      console.log(`✗ Abonnement terminé: client ${event.data.object?.customer}`);
       break;
-    }
-
     default:
       break;
   }
@@ -121,13 +118,13 @@ app.post('/api/checkout', async (req, res) => {
     }
     if (!STRIPE_PRICE_ID) return res.status(500).json({ error: 'STRIPE_PRICE_ID non configuré.' });
 
-    // Réutilise le client Stripe existant si déjà connu.
-    const existing = store.getByEmail(email);
+    // Réutilise le client Stripe existant (recherché directement chez Stripe).
+    const existing = (await customersByEmail(email))[0];
     const session = await stripe.checkout.sessions.create({
       mode: 'subscription',
       line_items: [{ price: STRIPE_PRICE_ID, quantity: 1 }],
-      ...(existing?.customerId
-        ? { customer: existing.customerId }
+      ...(existing?.id
+        ? { customer: existing.id }
         : { customer_email: email }),
       client_reference_id: email,
       metadata: { email },
@@ -147,15 +144,20 @@ app.post('/api/checkout', async (req, res) => {
 // ---------------------------------------------------------------------------
 // STATUS — l'extension interroge cet endpoint (REFRESH_SUBSCRIPTION).
 // ---------------------------------------------------------------------------
-app.get('/api/subscription-status', (req, res) => {
+app.get('/api/subscription-status', async (req, res) => {
   const email = String(req.query?.email || '').trim().toLowerCase();
-  const rec = email ? store.getByEmail(email) : null;
-  const active = rec?.status === 'active';
-  res.json({
-    active,
-    cancelAtPeriodEnd: rec?.cancelAtPeriodEnd ?? false,
-    currentPeriodEnd: rec?.currentPeriodEnd ?? null
-  });
+  if (!email) return res.json({ active: false, cancelAtPeriodEnd: false, currentPeriodEnd: null });
+  try {
+    const { sub } = await resolveByEmail(email);
+    res.json({
+      active: !!sub,
+      cancelAtPeriodEnd: sub?.cancel_at_period_end ?? false,
+      currentPeriodEnd: sub?.current_period_end ?? null
+    });
+  } catch (e) {
+    console.error('status:', e.message);
+    res.status(500).json({ active: false, error: 'Vérification du statut impossible.' });
+  }
 });
 
 // ---------------------------------------------------------------------------
@@ -164,10 +166,10 @@ app.get('/api/subscription-status', (req, res) => {
 app.post('/api/portal', async (req, res) => {
   try {
     const email = String(req.body?.email || '').trim().toLowerCase();
-    const rec = store.getByEmail(email);
-    if (!rec?.customerId) return res.status(404).json({ error: 'Client introuvable.' });
+    const { customer } = await resolveByEmail(email);
+    if (!customer?.id) return res.status(404).json({ error: 'Client introuvable.' });
     const portal = await stripe.billingPortal.sessions.create({
-      customer: rec.customerId,
+      customer: customer.id,
       return_url: `${PUBLIC_URL}/account?email=${encodeURIComponent(email)}`
     });
     res.json({ url: portal.url });
@@ -185,21 +187,12 @@ app.post('/api/cancel', async (req, res) => {
   try {
     const email = String(req.body?.email || '').trim().toLowerCase();
     const immediate = req.body?.immediate === true;
-    const rec = store.getByEmail(email);
-    if (!rec?.subscriptionId) return res.status(404).json({ error: 'Abonnement introuvable.' });
+    const { sub: current } = await resolveByEmail(email);
+    if (!current?.id) return res.status(404).json({ error: 'Abonnement introuvable.' });
 
-    let sub;
-    if (immediate) {
-      sub = await stripe.subscriptions.cancel(rec.subscriptionId);
-    } else {
-      sub = await stripe.subscriptions.update(rec.subscriptionId, { cancel_at_period_end: true });
-    }
-
-    store.upsert(email, {
-      cancelAtPeriodEnd: sub.cancel_at_period_end,
-      status: sub.status === 'canceled' ? 'inactive' : rec.status,
-      currentPeriodEnd: sub.current_period_end
-    });
+    const sub = immediate
+      ? await stripe.subscriptions.cancel(current.id)
+      : await stripe.subscriptions.update(current.id, { cancel_at_period_end: true });
 
     res.json({
       ok: true,
