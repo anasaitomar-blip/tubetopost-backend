@@ -215,6 +215,7 @@ app.get('/health', (_req, res) => res.json({ ok: true }));
 // ---------------------------------------------------------------------------
 app.get('/upgrade', (_req, res) => res.type('html').send(UPGRADE_PAGE));
 app.get('/account', (_req, res) => res.type('html').send(ACCOUNT_PAGE));
+app.get('/privacy', (_req, res) => res.type('html').send(PRIVACY_PAGE));
 
 app.listen(PORT, () => console.log(`TubeToPost backend → ${PUBLIC_URL} (port ${PORT})`));
 
@@ -242,6 +243,60 @@ const STYLE = `
   .logo{width:46px;height:46px;border-radius:12px;background:var(--soft);color:var(--p);display:grid;
     place-items:center;font-size:22px;margin-bottom:16px}
 `;
+
+const PRIVACY_PAGE = `<!doctype html><html lang=fr><meta charset=utf-8>
+<meta name=viewport content="width=device-width,initial-scale=1"><title>Confidentialité — TubeToPost</title>
+<style>
+  body{max-width:760px;margin:0 auto;padding:48px 22px;font-family:Inter,-apple-system,Segoe UI,Roboto,sans-serif;
+    color:#0f1115;line-height:1.6}
+  h1{font-size:26px;letter-spacing:-.02em}h2{font-size:18px;margin:26px 0 8px}
+  p,li{color:#374151;font-size:15px}a{color:#6d5efc}.date{color:#6b7280;font-size:13px}
+  code{background:#f3f4f6;padding:2px 6px;border-radius:5px;font-size:13px}
+</style>
+<h1>Politique de confidentialité — TubeToPost</h1>
+<p class=date>Dernière mise à jour : 14 juin 2026</p>
+<p>TubeToPost transforme une vidéo YouTube en brouillon de post LinkedIn via une IA.
+Nous appliquons la minimisation des données : seul le nécessaire est traité.</p>
+<h2>1. Données traitées</h2>
+<p><b>Contenu de la vidéo active</b> (titre, chaîne, description, durée, sous-titres) :
+lu uniquement quand vous cliquez sur « Générer », utilisé pour produire le post,
+<b>non conservé</b> après génération.</p>
+<p><b>Réglages locaux</b> (fournisseur IA, modèle, langue, ton, clé API, email, statut,
+crédits) : stockés dans <code>chrome.storage.sync</code>, ils restent dans votre
+navigateur et ne sont envoyés à aucun serveur de TubeToPost.</p>
+<p><b>Email d'abonnement</b> : utilisé uniquement pour associer et vérifier votre
+abonnement Stripe.</p>
+<h2>2. Destinataires (sous-traitants)</h2>
+<ul>
+<li><b>IA que vous choisissez</b> : en mode local (Ollama/LM Studio), rien ne quitte
+votre machine ; en mode commercial (OpenAI/Anthropic), le contenu est envoyé à l'API
+choisie avec votre clé, pour générer le texte.</li>
+<li><b>Stripe</b> : paiement et abonnement. Les données de carte sont saisies
+directement chez Stripe, jamais via l'extension ni notre backend.</li>
+<li><b>YouTube/Google</b> : l'extension lit la page que vous avez ouverte.</li>
+</ul>
+<p>Aucune vente de données. Aucune publicité. Aucun pistage.</p>
+<h2>3. Notre backend</h2>
+<p>Sert à créer le paiement Stripe, vérifier le statut d'abonnement en interrogeant
+Stripe en direct, et recevoir les webhooks. <b>Aucune base de données utilisateur</b> ;
+aucun contenu de vidéo ne lui est envoyé.</p>
+<h2>4. Clés API</h2>
+<p>Stockées localement, envoyées uniquement au fournisseur correspondant lors d'une
+génération. Nous n'y avons jamais accès. Supprimables à tout moment dans les options.</p>
+<h2>5. Conservation & suppression</h2>
+<p>Contenu vidéo : non conservé. Réglages/clés : jusqu'à effacement par vous.
+Abonnement : géré par Stripe, résiliable en un clic.</p>
+<h2>6. Sécurité</h2>
+<p>HTTPS de bout en bout. Aucune clé secrète embarquée dans l'extension.</p>
+<h2>7. Filtrage éthique</h2>
+<p>Le refus de certains contenus (jeux d'argent, alcool, musique, vulgaire) est
+effectué localement, sans transmission supplémentaire.</p>
+<h2>8. Vos droits</h2>
+<p>Accès, rectification, suppression de vos données d'abonnement :
+<a href="mailto:contact@tubetopost.com">contact@tubetopost.com</a>.</p>
+<h2>9. Modifications</h2>
+<p>Cette politique peut évoluer ; la date ci-dessus indique la dernière mise à jour.</p>
+</html>`;
 
 const UPGRADE_PAGE = `<!doctype html><html lang=fr><meta charset=utf-8>
 <meta name=viewport content="width=device-width,initial-scale=1"><title>TubeToPost Pro</title>
