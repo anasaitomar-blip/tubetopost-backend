@@ -140,7 +140,14 @@ app.post('/api/checkout', async (req, res) => {
     res.json({ url: session.url, id: session.id });
   } catch (e) {
     console.error('checkout:', e.message);
-    res.status(500).json({ error: 'Création de session impossible.' });
+    // Détail Stripe exposé pour le debug (type/code/message). À retirer ensuite.
+    res.status(500).json({
+      error: 'Création de session impossible.',
+      detail: e.message,
+      type: e.type,
+      code: e.code,
+      param: e.param
+    });
   }
 });
 
