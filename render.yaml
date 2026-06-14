@@ -1,0 +1,20 @@
+services:
+  - type: web
+    name: tubetopost-backend
+    runtime: node
+    plan: free
+    rootDir: .
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      # Secrets : à renseigner dans le dashboard Render (jamais dans le repo).
+      - key: STRIPE_SECRET_KEY
+        sync: false
+      - key: STRIPE_WEBHOOK_SECRET
+        sync: false
+      - key: STRIPE_PRICE_ID
+        sync: false
+      # PUBLIC_URL non nécessaire : Render injecte RENDER_EXTERNAL_URL,
+      # déjà géré en fallback dans server.js.
